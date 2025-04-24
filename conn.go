@@ -1,6 +1,7 @@
 package ltcp
 
 import (
+	"fmt"
 	"net"
 	"time"
 )
@@ -28,6 +29,8 @@ type LtcpConnOptions struct {
 	AutoSend bool
 	// 自动发送的时间间隔
 	SendTick time.Duration
+	// 每一批的最大发送数据包个数
+	MaxSendNumPerTick int
 }
 
 var DefaultLtcpConnOptions = LtcpConnOptions{
@@ -55,7 +58,7 @@ func NewUnConn(conn *net.UDPConn,
 	opts LtcpConnOptions) *LtcpConn {
 	con := NewConn(conn, opts)
 	con.remoteAddr = remoteAddr
-	con.closeFn = con.closeFn
+	con.closeFn = closeFn
 	return con
 }
 
@@ -153,22 +156,51 @@ func (c *LtcpConn) run() {
 }
 
 func (c *LtcpConn) connectedRecvLoop() {
-
+	// data := make([]byte, MAX_PACKAGE)
+	// for {
+	// 	// 从连接中读取字节流
+	// 	_, err := c.conn.Read(data)
+	// 	if err != nil {
+	// 		// TODO: 错误处理
+	// 		c.recvErr <- err
+	// 		return
+	// 	}
+	// }
 }
+
 func (c *LtcpConn) unconnectedRecvLoop() {
 
 }
 
 func (c *LtcpConn) sendLoop() {
-	// var sendNum int
-	// for {
-	// 	select {
-	// 	case tick := <-c.sendTick:
-	// 		for {
-	// 			select {
-	// 			case 
-	// 			}
-	// 		}
-	// 	}
-	// }
+	for {
+		select {
+		case tick := <-c.sendTick:
+			c.handleSendTick(tick)
+		}
+	}
+}
+
+func (c *LtcpConn) handleSendTick(tick int) {
+	// TODO: 1. 整理所有准备好的数据，封装成 packet
+	if err := c.collectBufferData(); err != nil {
+		c.sendErr <- err
+		return
+	}
+	// TODO: 2. 发送所有的 packets
+}
+
+func (c *LtcpConn) collectBufferData() error {
+	sendNum := 0
+	for sendNum < c.opts.MaxSendNumPerTick {
+		select {
+		case bts := <- c.sendChan:
+			// TODO: 整理数据包
+			fmt.Println(string(bts))
+			sendNum++
+		default:
+			return nil
+		}
+	}
+	return nil
 }

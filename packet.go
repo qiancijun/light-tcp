@@ -13,6 +13,11 @@ const (
 	PacketAck
 )
 
+type PacketList struct {
+	Next *PacketList
+	Data []byte
+}
+
 type Packet struct {
 	Type    PacketType // 包类型
 	Seq     uint32     // 序列号
@@ -20,12 +25,7 @@ type Packet struct {
 	Payload []byte     // 载荷
 }
 
-type PacketOptions struct {
-}
-
-var DefaultOptions PacketOptions = PacketOptions{}
-
-func NewPacket(typ PacketType, data []byte, option PacketOptions) *Packet {
+func NewPacket(typ PacketType, data []byte) *Packet {
 	packet := &Packet{
 		Type:    typ,
 		Payload: data,

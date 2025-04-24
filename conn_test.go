@@ -28,7 +28,7 @@ func TestConn(t *testing.T) {
 	defer conn.Close()
 
 	// 构建一个 Packet
-	p := NewPacket(PacketData, []byte("Hello"), DefaultOptions)
+	p := NewPacket(PacketData, []byte("Hello"))
 	data, err := p.Serialize()
 	assert.NoError(t, err)
 	_, err = conn.Write(data)
