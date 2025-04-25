@@ -20,6 +20,7 @@ type LtcpConn struct {
 
 	in chan []byte
 
+	ltcp *Ltcp // 负责可靠传输
 	opts LtcpConnOptions
 }
 
@@ -34,8 +35,9 @@ type LtcpConnOptions struct {
 }
 
 var DefaultLtcpConnOptions = LtcpConnOptions{
-	AutoSend: true,
-	SendTick: time.Millisecond * 20,
+	AutoSend:          true,
+	SendTick:          time.Millisecond * 20,
+	MaxSendNumPerTick: 16,
 }
 
 func NewConn(conn *net.UDPConn, opts LtcpConnOptions) *LtcpConn {
@@ -46,6 +48,8 @@ func NewConn(conn *net.UDPConn, opts LtcpConnOptions) *LtcpConn {
 		sendChan: make(chan []byte, 1<<16),
 		sendErr:  make(chan error, 2),
 		sendTick: make(chan int, 2),
+		in:       make(chan []byte, 1<<16),
+		ltcp:     NewLtcp(),
 		opts:     opts,
 	}
 	go con.run()
@@ -120,6 +124,7 @@ func (c *LtcpConn) Write(bts []byte) (n int, err error) {
 	return len(bts), nil
 }
 
+// Read 只负责从 recvChan 中拿数据
 func (c *LtcpConn) Read(bts []byte) (n int, err error) {
 	select {
 	case data := <-c.recvChan:
@@ -128,6 +133,25 @@ func (c *LtcpConn) Read(bts []byte) (n int, err error) {
 	case err := <-c.recvErr:
 		return 0, err
 	}
+}
+
+// 从 ltcp 中的读取缓冲区读取数据
+// 把 Packet 中的 Payload 读出来，发送到 recvChan
+func (c *LtcpConn) ltcpRecv(data []byte) error {
+	for {
+		n, err := c.ltcp.Recv(data)
+		fmt.Println(n)
+		if err != nil {
+			c.recvErr <- err
+			return err
+		} else if n == 0 {
+			break
+		}
+		bts := make([]byte, n)
+		copy(bts, data[:n])
+		c.recvChan <- bts
+	}
+	return nil
 }
 
 func (c *LtcpConn) run() {
@@ -143,15 +167,16 @@ func (c *LtcpConn) run() {
 		}()
 	}
 	go func() {
-		if c.Connected() {
-			// 和某个客户端建立的连接
-			c.connectedRecvLoop()
-		} else {
-			// 监听者
-			c.unconnectedRecvLoop()
-		}
+		c.unconnectedRecvLoop()
+		// if c.Connected() {
+		// 	// 和某个客户端建立的连接
+		// 	c.connectedRecvLoop()
+		// } else {
+		// 	// 监听者
+		// 	c.unconnectedRecvLoop()
+		// }
 	}()
-	
+
 	c.sendLoop()
 }
 
@@ -169,7 +194,22 @@ func (c *LtcpConn) connectedRecvLoop() {
 }
 
 func (c *LtcpConn) unconnectedRecvLoop() {
-
+	// TODO: 需要定义出去
+	// 这部分逻辑有问题，ltcp 只负责监听 c.in
+	// 读取应该负责从接受缓冲区读取
+	data := make([]byte, 0x7fff)
+	for {
+		select {
+		case bts := <-c.in:
+			if err := c.ltcp.Parse(bts); err != nil {
+				fmt.Println(err)
+				return
+			}
+			if err := c.ltcpRecv(data); err != nil {
+				return
+			}
+		}
+	}
 }
 
 func (c *LtcpConn) sendLoop() {
@@ -182,21 +222,35 @@ func (c *LtcpConn) sendLoop() {
 }
 
 func (c *LtcpConn) handleSendTick(tick int) {
-	// TODO: 1. 整理所有准备好的数据，封装成 packet
+	// TODO: 1. 整理所有准备好的数据
 	if err := c.collectBufferData(); err != nil {
 		c.sendErr <- err
 		return
 	}
-	// TODO: 2. 发送所有的 packets
+	// TODO: 2. 封装所有的数据为 Packet
+	c.ltcp.Package(tick)
+	// TODO: 3. 通过网络发送所有 Packet，封装一个迭代器
+	for p := c.ltcp.sendQueue.Head.Next; p != c.ltcp.sendQueue.Tail; p = p.Next {
+		data, err := p.Packet.Serialize()
+		if err != nil {
+			// TODO: 处理错误
+			fmt.Println(err)
+		}
+		if c.Connected() {
+			c.conn.Write(data)
+		} else {
+			c.conn.WriteToUDP(data, c.remoteAddr)
+		}
+	}
 }
 
 func (c *LtcpConn) collectBufferData() error {
 	sendNum := 0
 	for sendNum < c.opts.MaxSendNumPerTick {
 		select {
-		case bts := <- c.sendChan:
-			// TODO: 整理数据包
-			fmt.Println(string(bts))
+		case bts := <-c.sendChan:
+			// 整理数据包
+			c.ltcp.Collect(bts)
 			sendNum++
 		default:
 			return nil

@@ -74,7 +74,7 @@ func (s *UDPServer) run() {
 		}
 
 		// 发送响应包
-		responsePacket := NewPacket(PacketAck, []byte("Hello"))
+		responsePacket := NewPacket(PacketTypeAck, []byte("Hello"))
 		err = s.sendPacket(s.Conn, clientAddr, responsePacket)
 		if err != nil {
 			fmt.Println("sending packet error: ", err)
