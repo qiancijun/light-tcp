@@ -113,6 +113,8 @@ func (q *PacketQueue) pop() *Packet {
 	head := q.Head
 	popNode := head.Next
 	head.Next = popNode.Next
+	popNode.Next.Prev = head
+	q.cnt--
 	return popNode.Packet
 }
 

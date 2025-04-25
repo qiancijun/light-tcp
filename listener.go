@@ -33,6 +33,10 @@ func NewLtcpListener(conn *net.UDPConn) *LtcpListener {
 }
 
 func (l *LtcpListener) Accept() (net.Conn, error) {
+	return l.AcceptLtcpConn()
+}
+
+func (l *LtcpListener) AcceptLtcpConn() (*LtcpConn, error) {
 	select {
 	case c := <-l.newLtcpConnChan:
 		return c, nil

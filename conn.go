@@ -140,7 +140,6 @@ func (c *LtcpConn) Read(bts []byte) (n int, err error) {
 func (c *LtcpConn) ltcpRecv(data []byte) error {
 	for {
 		n, err := c.ltcp.Recv(data)
-		fmt.Println(n)
 		if err != nil {
 			c.recvErr <- err
 			return err

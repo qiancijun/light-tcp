@@ -105,6 +105,8 @@ func TestConnRead(t *testing.T) {
 		conn.in <- bts
 	}
 
+	
+
 	idx := 0
 	for {
 		data := make([]byte, 32767)

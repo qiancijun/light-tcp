@@ -1,7 +1,5 @@
 package ltcp
 
-import "fmt"
-
 /**
 * LTCP 在 UDP 上实现了以下功能
 * 	1. 数据包编号
@@ -65,7 +63,6 @@ func (ltcp *Ltcp) Parse(bts []byte) error {
 		// 更新一下最后收到数据的 Tick
 		ltcp.lastRecvTick = ltcp.currentTick
 		// 加入到接收缓冲区
-		fmt.Println("收到一个 Data 包")
 		ltcp.recvQueue.push(packet)
 	case PacketTypePing:
 		// 心跳包
