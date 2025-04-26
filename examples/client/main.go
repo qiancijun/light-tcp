@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net"
+	"time"
 
 	"github.com/qiancijun/ltcp"
 )
@@ -22,7 +23,17 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+
+	// p := ltcp.NewPacket(ltcp.PacketTypeData, []byte("Hello"))
+	// data, err := p.Serialize()
+	// if err != nil {
+	// 	panic(err)
+	// }
+	// conn.Write(data)
+	// return
+
 	ltcpConn := ltcp.NewConn(conn, ltcp.DefaultLtcpConnOptions)
+	fmt.Printf("client %s connect to server %s\n", laddr.String(), raddr.String())
 
 	datas := [][]byte{
 		[]byte("Hello"),
@@ -31,12 +42,15 @@ func main() {
 	}
 
 	for _, data := range datas {
+		fmt.Println("ready to send data to server, data len: ", len(data))
 		_, err := ltcpConn.Write(data)
 		if err != nil {
 			fmt.Println(err)
 			break
 		}
 	}
+
+	time.Sleep(1 * time.Second)
 
 	ltcpConn.Close()
 }

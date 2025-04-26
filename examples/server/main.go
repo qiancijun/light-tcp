@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"os/signal"
@@ -24,6 +25,7 @@ func main() {
 	}
 
 	listener := ltcp.NewLtcpListener(conn)
+	fmt.Println("server run on port 8080")
 
 	go func() {
 		for {
@@ -32,6 +34,7 @@ func main() {
 				fmt.Println("accept conn error: ", err)
 				continue
 			}
+			log.Println("server accept a new connection: ", rconn.RemoteAddr().String())
 			go read(rconn)
 		}
 	}()
@@ -44,6 +47,7 @@ func main() {
 }
 
 func read(conn *ltcp.LtcpConn) {
+	log.Println("read data from conn...")
 	for {
 		data := make([]byte, 32767)
 		n, err := conn.Read(data)
@@ -51,6 +55,6 @@ func read(conn *ltcp.LtcpConn) {
 			fmt.Println("read error: ", err)
 			break
 		}
-		fmt.Println("receive: ", string(data[:n]))
+		fmt.Println("server receive data: ", string(data[:n]))
 	}
 }

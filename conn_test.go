@@ -15,7 +15,11 @@ func createLtcpConn(t *testing.T) *LtcpConn {
 	udpConn, err := net.ListenUDP("udp", udpAddr)
 	assert.NoError(t, err)
 
-	conn := NewConn(udpConn, DefaultLtcpConnOptions)
+	// conn := NewConn(udpConn, DefaultLtcpConnOptions)
+	// assert.NotNil(t, conn)
+	rUdpAddr, err := net.ResolveUDPAddr("udp", ":8888")
+	assert.NoError(t, err)
+	conn := NewUnConn(udpConn, rUdpAddr, nil, DefaultLtcpConnOptions)
 	assert.NotNil(t, conn)
 	return conn
 }
@@ -62,7 +66,9 @@ func TestConnWrite(t *testing.T) {
 	udpConn, err := net.ListenUDP("udp", udpAddr)
 	assert.NoError(t, err)
 
-	conn := NewConn(udpConn, DefaultLtcpConnOptions)
+	rUdpAddr, err := net.ResolveUDPAddr("udp", ":8888")
+	assert.NoError(t, err)
+	conn := NewUnConn(udpConn, rUdpAddr, nil, DefaultLtcpConnOptions)
 	assert.NotNil(t, conn)
 
 	datas := [][]byte{

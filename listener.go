@@ -2,6 +2,7 @@ package ltcp
 
 import (
 	"fmt"
+	"log"
 	"net"
 	"sync"
 )
@@ -29,6 +30,7 @@ func NewLtcpListener(conn *net.UDPConn) *LtcpListener {
 		newLtcpErr:      make(chan error, 12),
 		ltcpConnMap:     make(map[string]*LtcpConn),
 	}
+	go listen.Run()
 	return listen
 }
 
@@ -39,6 +41,7 @@ func (l *LtcpListener) Accept() (net.Conn, error) {
 func (l *LtcpListener) AcceptLtcpConn() (*LtcpConn, error) {
 	select {
 	case c := <-l.newLtcpConnChan:
+		log.Println("server receive a new ltcp connection")
 		return c, nil
 	case e := <-l.newLtcpErr:
 		return nil, e
@@ -82,12 +85,14 @@ func (l *LtcpListener) Run() {
 			l.newLtcpErr <- err
 			continue
 		}
+		log.Println("read a new UDP packet, data len: ", n)
 		l.lock.RLock()
 		ltcpConn, ok := l.ltcpConnMap[remoteAddr.String()]
 		l.lock.RUnlock()
 
 		// 没有这个链接的管理，创建一个虚拟的链接
 		if !ok {
+			log.Println("server create a new connection")
 			ltcpConn = NewUnConn(l.conn, remoteAddr, l.CloseLtcp, DefaultLtcpConnOptions)
 			l.lock.Lock()
 			l.ltcpConnMap[remoteAddr.String()] = ltcpConn

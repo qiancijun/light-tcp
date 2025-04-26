@@ -11,6 +11,7 @@ const (
 	PacketTypeData PacketType = iota
 	PacketTypeAck
 	PacketTypePing
+	PacketTypeClose
 )
 
 type PacketNode struct {
@@ -116,6 +117,10 @@ func (q *PacketQueue) pop() *Packet {
 	popNode.Next.Prev = head
 	q.cnt--
 	return popNode.Packet
+}
+
+func (q *PacketQueue) HasValue() bool {
+	return q.Head.Next != q.Tail
 }
 
 // 迭代器

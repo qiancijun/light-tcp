@@ -1,5 +1,10 @@
 package ltcp
 
+import (
+	"errors"
+	"log"
+)
+
 /**
 * LTCP 在 UDP 上实现了以下功能
 * 	1. 数据包编号
@@ -8,23 +13,30 @@ package ltcp
 *	4. 流量控制
  */
 
+var (
+	ErrRemoteEof = errors.New("remote connection eof")
+)
+
 type Ltcp struct {
 	// 发送缓冲区
 	sendQueue *PacketQueue
 	// 接收缓冲区
 	recvQueue *PacketQueue
 
+	errChan chan error // 传递错误给上游协程来处理
+
 	sendId       uint32
 	currentTick  uint32
 	lastRecvTick uint32
 }
 
-func NewLtcp() *Ltcp {
+func NewLtcp(errorChan chan error) *Ltcp {
 	ltcp := &Ltcp{
 		sendQueue:   NewPacketQueue(),
 		recvQueue:   NewPacketQueue(),
 		sendId:      0,
 		currentTick: 0,
+		errChan:     errorChan,
 	}
 	return ltcp
 }
@@ -57,15 +69,21 @@ func (ltcp *Ltcp) Parse(bts []byte) error {
 		// 接受到了一个不可解析的包
 		return err
 	}
+	log.Printf("[Debug] parse packet, type=%d, seq=%d, tick=%d\n", packet.Type, packet.Seq, packet.Tick)
 	switch packet.Type {
 	case PacketTypeData:
 		// 接受到的包是一个数据包
 		// 更新一下最后收到数据的 Tick
 		ltcp.lastRecvTick = ltcp.currentTick
 		// 加入到接收缓冲区
+		log.Printf("[Debug] conn put data packet to recv queue")
 		ltcp.recvQueue.push(packet)
 	case PacketTypePing:
 		// 心跳包
+	case PacketTypeClose:
+		// 关闭连接
+		// 通知上游关闭链接
+		return ErrRemoteEof
 	default:
 		// TODO: 接受到了一个未知类型的包
 		return nil

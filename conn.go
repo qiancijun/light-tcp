@@ -2,6 +2,7 @@ package ltcp
 
 import (
 	"fmt"
+	"log"
 	"net"
 	"time"
 )
@@ -20,8 +21,9 @@ type LtcpConn struct {
 
 	in chan []byte
 
-	ltcp *Ltcp // 负责可靠传输
-	opts LtcpConnOptions
+	ltcp    *Ltcp      // 负责可靠传输
+	ltcpErr chan error // 用于接收来自 ltcp 的 error
+	opts    LtcpConnOptions
 }
 
 type LtcpConnOptions struct {
@@ -41,6 +43,7 @@ var DefaultLtcpConnOptions = LtcpConnOptions{
 }
 
 func NewConn(conn *net.UDPConn, opts LtcpConnOptions) *LtcpConn {
+	ltcpErr := make(chan error, 2)
 	con := &LtcpConn{
 		conn:     conn,
 		recvChan: make(chan []byte, 1<<16),
@@ -49,7 +52,8 @@ func NewConn(conn *net.UDPConn, opts LtcpConnOptions) *LtcpConn {
 		sendErr:  make(chan error, 2),
 		sendTick: make(chan int, 2),
 		in:       make(chan []byte, 1<<16),
-		ltcp:     NewLtcp(),
+		ltcp:     NewLtcp(ltcpErr),
+		ltcpErr:  ltcpErr,
 		opts:     opts,
 	}
 	go con.run()
@@ -60,9 +64,22 @@ func NewUnConn(conn *net.UDPConn,
 	remoteAddr *net.UDPAddr,
 	closeFn func(string),
 	opts LtcpConnOptions) *LtcpConn {
-	con := NewConn(conn, opts)
-	con.remoteAddr = remoteAddr
-	con.closeFn = closeFn
+	ltcpErr := make(chan error, 2)
+	con := &LtcpConn{
+		conn:       conn,
+		remoteAddr: remoteAddr,
+		recvChan:   make(chan []byte, 1<<16),
+		recvErr:    make(chan error, 2),
+		sendChan:   make(chan []byte, 1<<16),
+		sendErr:    make(chan error, 2),
+		sendTick:   make(chan int, 2),
+		in:         make(chan []byte, 1<<16),
+		ltcp:       NewLtcp(ltcpErr),
+		ltcpErr:    ltcpErr,
+		closeFn:    closeFn,
+		opts:       opts,
+	}
+	go con.run()
 	return con
 }
 
@@ -98,12 +115,23 @@ func (c *LtcpConn) Connected() bool {
 	return c.remoteAddr == nil
 }
 
+// TODO: 优雅关闭
 func (c *LtcpConn) Close() error {
+	closePacket := NewPacket(PacketTypeClose, nil)
+	closeData, err := closePacket.Serialize()
+	if err != nil {
+
+	}
 	if c.remoteAddr != nil {
 		if c.closeFn != nil {
 			c.closeFn(c.remoteAddr.String())
 		}
-		// TODO: 发送中断链接请求
+		// 发送中断链接请求
+		_, _ = c.conn.WriteToUDP(closeData, c.remoteAddr)
+		// TODO: 发送 EOF，关闭发送协程
+
+	} else {
+		c.conn.Write(closeData)
 	}
 	return nil
 }
@@ -192,34 +220,38 @@ func (c *LtcpConn) connectedRecvLoop() {
 	// }
 }
 
+// 从套接字中收到的数据 c.in 通过解析，存储在接收缓冲区，等待接受
 func (c *LtcpConn) unconnectedRecvLoop() {
 	// TODO: 需要定义出去
 	// 这部分逻辑有问题，ltcp 只负责监听 c.in
 	// 读取应该负责从接受缓冲区读取
 	data := make([]byte, 0x7fff)
-	for {
-		select {
-		case bts := <-c.in:
-			if err := c.ltcp.Parse(bts); err != nil {
-				fmt.Println(err)
+	for bts := range c.in {
+		log.Println("[unconnectedRecvLoop] recv loop receive data, data len: ", len(bts))
+		if err := c.ltcp.Parse(bts); err != nil {
+			if err == ErrRemoteEof {
+				// TODO: 关闭连接
+				// 收到了一个关闭包
+				c.closeChannels()
 				return
 			}
-			if err := c.ltcpRecv(data); err != nil {
-				return
-			}
+			fmt.Println(err)
+			return
+		}
+		// 从接收缓冲区拿取数据
+		if err := c.ltcpRecv(data); err != nil {
+			return
 		}
 	}
 }
 
 func (c *LtcpConn) sendLoop() {
-	for {
-		select {
-		case tick := <-c.sendTick:
-			c.handleSendTick(tick)
-		}
+	for tick := range c.sendTick {
+		c.handleSendTick(tick)
 	}
 }
 
+// WARN: 没有消耗数据
 func (c *LtcpConn) handleSendTick(tick int) {
 	// TODO: 1. 整理所有准备好的数据
 	if err := c.collectBufferData(); err != nil {
@@ -229,10 +261,11 @@ func (c *LtcpConn) handleSendTick(tick int) {
 	// TODO: 2. 封装所有的数据为 Packet
 	c.ltcp.Package(tick)
 	// TODO: 3. 通过网络发送所有 Packet，封装一个迭代器
-	for p := c.ltcp.sendQueue.Head.Next; p != c.ltcp.sendQueue.Tail; p = p.Next {
-		data, err := p.Packet.Serialize()
+	for c.ltcp.sendQueue.HasValue() {
+		p := c.ltcp.sendQueue.pop()
+		data, err := p.Serialize()
 		if err != nil {
-			// TODO: 处理错误
+			// TODO: 错误处理
 			fmt.Println(err)
 		}
 		if c.Connected() {
@@ -241,6 +274,18 @@ func (c *LtcpConn) handleSendTick(tick int) {
 			c.conn.WriteToUDP(data, c.remoteAddr)
 		}
 	}
+	// for p := c.ltcp.sendQueue.Head.Next; p != c.ltcp.sendQueue.Tail; p = p.Next {
+	// 	data, err := p.Packet.Serialize()
+	// 	if err != nil {
+	// 		// TODO: 处理错误
+	// 		fmt.Println(err)
+	// 	}
+	// 	if c.Connected() {
+	// 		c.conn.Write(data)
+	// 	} else {
+	// 		c.conn.WriteToUDP(data, c.remoteAddr)
+	// 	}
+	// }
 }
 
 func (c *LtcpConn) collectBufferData() error {
@@ -256,4 +301,11 @@ func (c *LtcpConn) collectBufferData() error {
 		}
 	}
 	return nil
+}
+
+func (c *LtcpConn) closeChannels() {
+	close(c.in)
+	close(c.recvChan)
+	close(c.sendChan)
+	close(c.ltcpErr)
 }

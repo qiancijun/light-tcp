@@ -26,7 +26,7 @@ func TestLtcpCollect(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		ltcp := NewLtcp()
+		ltcp := NewLtcp(make(chan error, 1<<16))
 		for _, bts := range test.datas {
 			ltcp.Collect(bts)
 		}
