@@ -126,10 +126,11 @@ func (c *LtcpConn) Close() error {
 		if c.closeFn != nil {
 			c.closeFn(c.remoteAddr.String())
 		}
-		// 发送中断链接请求
+		// 给对发送中断链接请求
 		_, _ = c.conn.WriteToUDP(closeData, c.remoteAddr)
-		// TODO: 发送 EOF，关闭发送协程
-
+		// TODO: 关闭自己的发送协程和接收协程
+		// 主要对 run 方法开启的三个协程做销毁
+		// unconnectedRecvLoop 监听 c.in 这个 channel
 	} else {
 		c.conn.Write(closeData)
 	}
@@ -273,18 +274,6 @@ func (c *LtcpConn) handleSendTick(tick int) {
 			c.conn.WriteToUDP(data, c.remoteAddr)
 		}
 	}
-	// for p := c.ltcp.sendQueue.Head.Next; p != c.ltcp.sendQueue.Tail; p = p.Next {
-	// 	data, err := p.Packet.Serialize()
-	// 	if err != nil {
-	// 		// TODO: 处理错误
-	// 		fmt.Println(err)
-	// 	}
-	// 	if c.Connected() {
-	// 		c.conn.Write(data)
-	// 	} else {
-	// 		c.conn.WriteToUDP(data, c.remoteAddr)
-	// 	}
-	// }
 }
 
 func (c *LtcpConn) collectBufferData() error {
