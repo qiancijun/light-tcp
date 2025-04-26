@@ -232,7 +232,6 @@ func (c *LtcpConn) unconnectedRecvLoop() {
 			if err == ErrRemoteEof {
 				// TODO: 关闭连接
 				// 收到了一个关闭包
-				c.closeChannels()
 				return
 			}
 			fmt.Println(err)
@@ -301,11 +300,4 @@ func (c *LtcpConn) collectBufferData() error {
 		}
 	}
 	return nil
-}
-
-func (c *LtcpConn) closeChannels() {
-	close(c.in)
-	close(c.recvChan)
-	close(c.sendChan)
-	close(c.ltcpErr)
 }
