@@ -11,7 +11,7 @@ import (
 type PacketType uint8
 
 const (
-	MinPacketLength            = 17
+	MinPacketLength            = 1 + 4 + 4 + 4 + 4 + 4 // type + seq + ack + tick + payloadLen + crc32
 	PacketTypeData  PacketType = iota
 	PacketTypeAck
 	PacketTypePing
@@ -29,17 +29,19 @@ type PacketNode struct {
 }
 
 type Packet struct {
-	Type    PacketType // 包类型
-	Seq     uint32     // 序列号
-	Ack     uint32     // 确认号
-	Tick    uint32
-	Payload []byte // 载荷
+	Type       PacketType // 包类型
+	Seq        uint32     // 序列号
+	Ack        uint32     // 确认号
+	Tick       uint32
+	PayloadLen uint32 // Payload 长度
+	Payload    []byte // 载荷
 }
 
 func NewPacket(typ PacketType, data []byte) *Packet {
 	packet := &Packet{
-		Type:    typ,
-		Payload: data,
+		Type:       typ,
+		PayloadLen: uint32(len(data)),
+		Payload:    data,
 	}
 	// TODO: 根据 typ 封装信息
 	return packet
@@ -55,7 +57,7 @@ func (p *Packet) Serialize() ([]byte, error) {
 	}
 
 	// 写入 Seq，Ack，Tick
-	fileds := []uint32{p.Seq, p.Ack, p.Tick}
+	fileds := []uint32{p.Seq, p.Ack, p.Tick, p.PayloadLen}
 	for _, f := range fileds {
 		if err := binary.Write(buf, binary.BigEndian, f); err != nil {
 			return nil, err
@@ -101,7 +103,7 @@ func DeserializePacket(data []byte) (*Packet, error) {
 	p.Type = PacketType(typeByte)
 
 	// 读 Seq，Ack，Tick
-	fields := []*uint32{&p.Seq, &p.Ack, &p.Tick}
+	fields := []*uint32{&p.Seq, &p.Ack, &p.Tick, &p.PayloadLen}
 	for _, f := range fields {
 		if err := binary.Read(buf, binary.BigEndian, f); err != nil {
 			return nil, err
@@ -109,9 +111,13 @@ func DeserializePacket(data []byte) (*Packet, error) {
 	}
 
 	// 填充 Payload
-	p.Payload, err = io.ReadAll(buf)
-	if err != nil {
-		return nil, err
+	if p.PayloadLen > 0 {
+		p.Payload = make([]byte, p.PayloadLen)
+		if _, err := io.ReadFull(buf, p.Payload); err != nil {
+			return nil, err
+		}
+	} else {
+		p.Payload = nil
 	}
 	return p, nil
 }
