@@ -21,9 +21,11 @@ type LtcpConn struct {
 
 	in chan []byte
 
-	ltcp    *Ltcp      // 负责可靠传输
-	ltcpErr chan error // 用于接收来自 ltcp 的 error
-	opts    LtcpConnOptions
+	runTicker *time.Ticker  // 定时发送 sendTick 的计时器
+	ltcp      *Ltcp         // 负责可靠传输
+	ltcpErr   chan error    // 用于接收来自 ltcp 的 error
+	closeChan chan struct{} // 用于接收 close 信号，中断协程
+	opts      LtcpConnOptions
 }
 
 type LtcpConnOptions struct {
@@ -45,16 +47,18 @@ var DefaultLtcpConnOptions = LtcpConnOptions{
 func NewConn(conn *net.UDPConn, opts LtcpConnOptions) *LtcpConn {
 	ltcpErr := make(chan error, 2)
 	con := &LtcpConn{
-		conn:     conn,
-		recvChan: make(chan []byte, 1<<16),
-		recvErr:  make(chan error, 2),
-		sendChan: make(chan []byte, 1<<16),
-		sendErr:  make(chan error, 2),
-		sendTick: make(chan int, 2),
-		in:       make(chan []byte, 1<<16),
-		ltcp:     NewLtcp(ltcpErr),
-		ltcpErr:  ltcpErr,
-		opts:     opts,
+		conn:      conn,
+		recvChan:  make(chan []byte, 1<<16),
+		recvErr:   make(chan error, 2),
+		sendChan:  make(chan []byte, 1<<16),
+		sendErr:   make(chan error, 2),
+		sendTick:  make(chan int, 2),
+		in:        make(chan []byte, 1<<16),
+		ltcp:      NewLtcp(ltcpErr),
+		runTicker: time.NewTicker(opts.SendTick),
+		closeChan: make(chan struct{}),
+		ltcpErr:   ltcpErr,
+		opts:      opts,
 	}
 	go con.run()
 	return con
@@ -75,6 +79,8 @@ func NewUnConn(conn *net.UDPConn,
 		sendTick:   make(chan int, 2),
 		in:         make(chan []byte, 1<<16),
 		ltcp:       NewLtcp(ltcpErr),
+		runTicker:  time.NewTicker(opts.SendTick),
+		closeChan:  make(chan struct{}),
 		ltcpErr:    ltcpErr,
 		closeFn:    closeFn,
 		opts:       opts,
@@ -128,12 +134,17 @@ func (c *LtcpConn) Close() error {
 		}
 		// 给对发送中断链接请求
 		_, _ = c.conn.WriteToUDP(closeData, c.remoteAddr)
-		// TODO: 关闭自己的发送协程和接收协程
-		// 主要对 run 方法开启的三个协程做销毁
-		// unconnectedRecvLoop 监听 c.in 这个 channel
 	} else {
 		c.conn.Write(closeData)
 	}
+	// TODO: 回收 Ltcp 中的资源
+	// 关闭自己的发送协程和接收协程
+	// 主要对 run 方法开启的三个协程做销毁
+	// unconnectedRecvLoop 监听 c.in 这个 channel
+	// 停止 run 中的 ticker，并且发送一个 close 信号，销毁协程
+	close(c.in)
+	c.runTicker.Stop()
+	c.closeChan <- struct{}{}
 	return nil
 }
 
@@ -186,39 +197,60 @@ func (c *LtcpConn) run() {
 	if c.opts.AutoSend && c.opts.SendTick > 0 {
 		// 自动发送数据包
 		go func() {
-			ticker := time.NewTicker(c.opts.SendTick)
-			defer ticker.Stop()
-
-			for range ticker.C {
-				c.sendTick <- 1
+			// for range c.runTicker.C {
+			// 	c.sendTick <- 1
+			// }
+			for {
+				select {
+				case <-c.runTicker.C:
+					c.sendTick <- 1
+				case <-c.closeChan:
+					log.Println("[Debug] receive close signal, close run() goroutine")
+					return
+				}
 			}
 		}()
 	}
 	go func() {
-		c.unconnectedRecvLoop()
-		// if c.Connected() {
-		// 	// 和某个客户端建立的连接
-		// 	c.connectedRecvLoop()
-		// } else {
-		// 	// 监听者
-		// 	c.unconnectedRecvLoop()
-		// }
+		if c.Connected() {
+			// 和某个客户端建立的连接
+			log.Println("has no remote addr, start connectedRecvLoop")
+			c.connectedRecvLoop()
+		} else {
+			// 监听者
+			log.Println("has remote addr, start unconnectedRecvLoop")
+			c.unconnectedRecvLoop()
+		}
 	}()
 
 	c.sendLoop()
 }
 
 func (c *LtcpConn) connectedRecvLoop() {
-	// data := make([]byte, MAX_PACKAGE)
-	// for {
-	// 	// 从连接中读取字节流
-	// 	_, err := c.conn.Read(data)
-	// 	if err != nil {
-	// 		// TODO: 错误处理
-	// 		c.recvErr <- err
-	// 		return
-	// 	}
-	// }
+	data := make([]byte, MAX_PACKAGE)
+	for {
+		// 客户端没有 c.in，所以从原始的套接字中读取
+		// 从连接中读取字节流
+		n, err := c.conn.Read(data)
+		if err != nil {
+			// TODO: 错误处理
+			c.recvErr <- err
+			return
+		}
+		if err := c.ltcp.Parse(data[:n]); err != nil {
+			if err == ErrRemoteEof {
+				// TODO: 关闭连接
+				// 收到了一个关闭包
+				c.Close()
+				return
+			}
+			fmt.Println(err)
+			return
+		}
+		if c.ltcpRecv(data) != nil {
+			return
+		}
+	}
 }
 
 // 从套接字中收到的数据 c.in 通过解析，存储在接收缓冲区，等待接受
@@ -226,13 +258,14 @@ func (c *LtcpConn) unconnectedRecvLoop() {
 	// TODO: 需要定义出去
 	// 这部分逻辑有问题，ltcp 只负责监听 c.in
 	// 读取应该负责从接受缓冲区读取
-	data := make([]byte, 0x7fff)
+	data := make([]byte, MAX_PACKAGE)
 	for bts := range c.in {
-		log.Println("[unconnectedRecvLoop] recv loop receive data, data len: ", len(bts))
+		// log.Println("[unconnectedRecvLoop] recv loop receive data, data len: ", len(bts))
 		if err := c.ltcp.Parse(bts); err != nil {
 			if err == ErrRemoteEof {
 				// TODO: 关闭连接
 				// 收到了一个关闭包
+				c.Close()
 				return
 			}
 			fmt.Println(err)
@@ -268,6 +301,7 @@ func (c *LtcpConn) handleSendTick(tick int) {
 			// TODO: 错误处理
 			fmt.Println(err)
 		}
+		log.Println("[Debug] ready to send packet, seq: ", p.Seq)
 		if c.Connected() {
 			c.conn.Write(data)
 		} else {

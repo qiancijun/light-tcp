@@ -48,13 +48,32 @@ func main() {
 
 func read(conn *ltcp.LtcpConn) {
 	log.Println("read data from conn...")
+	file, err := os.OpenFile("examples/files/copy.jpg", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	defer file.Close()
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
 	for {
-		data := make([]byte, 32767)
+		data := make([]byte, ltcp.MAX_PACKAGE)
 		n, err := conn.Read(data)
 		if err != nil {
 			fmt.Println("read error: ", err)
 			break
 		}
-		fmt.Println("server receive data: ", string(data[:n]))
+		// fmt.Println("server receive data, data len:", n)
+		_, err = file.Write(data[:n])
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+
+		// fmt.Println("server write data")
+		// _, err = conn.Write(data[:n])
+		// if err != nil {
+		// 	fmt.Println(err)
+		// 	return
+		// }
 	}
+
 }

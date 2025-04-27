@@ -2,16 +2,25 @@ package ltcp
 
 import (
 	"bytes"
-	"encoding/gob"
+	"encoding/binary"
+	"errors"
+	"hash/crc32"
+	"io"
 )
 
 type PacketType uint8
 
 const (
-	PacketTypeData PacketType = iota
+	MinPacketLength            = 17
+	PacketTypeData  PacketType = iota
 	PacketTypeAck
 	PacketTypePing
 	PacketTypeClose
+)
+
+var (
+	ErrPacketNotEnouthLength = errors.New("packet has not enough length")
+	ErrPacketCorrupted       = errors.New("packet has been corrupted")
 )
 
 type PacketNode struct {
@@ -37,26 +46,74 @@ func NewPacket(typ PacketType, data []byte) *Packet {
 }
 
 // 将 Packet 序列化为字节数组
-// TODO: 目前使用 gob 实现序列化，后续优化实现自定义序列化方式
 func (p *Packet) Serialize() ([]byte, error) {
-	var buf bytes.Buffer
-	enc := gob.NewEncoder(&buf)
-	if err := enc.Encode(p); err != nil {
+	buf := new(bytes.Buffer)
+
+	// 写入 Byte
+	if err := buf.WriteByte(byte(p.Type)); err != nil {
 		return nil, err
 	}
+
+	// 写入 Seq，Ack，Tick
+	fileds := []uint32{p.Seq, p.Ack, p.Tick}
+	for _, f := range fileds {
+		if err := binary.Write(buf, binary.BigEndian, f); err != nil {
+			return nil, err
+		}
+	}
+
+	// 写入 Payload
+	if _, err := buf.Write(p.Payload); err != nil {
+		return nil, err
+	}
+
+	// 计算 CRC
+	crc := crc32.ChecksumIEEE(buf.Bytes())
+	if err := binary.Write(buf, binary.BigEndian, crc); err != nil {
+		return nil, err
+	}
+
 	return buf.Bytes(), nil
 }
 
 // 从字节数组反序列化为 Packet
 func DeserializePacket(data []byte) (*Packet, error) {
-	var p Packet
-	buf := bytes.NewReader(data)
-	dec := gob.NewDecoder(buf)
-	if err := dec.Decode(&p); err != nil {
+	if len(data) < MinPacketLength {
+		return nil, ErrPacketNotEnouthLength
+	}
+
+	// 校验 CRC
+	payloadWithoutCRC := data[:len(data)-4]
+	expectCRC := binary.BigEndian.Uint32(data[len(data)-4:])
+	calculatedCRC := crc32.ChecksumIEEE(payloadWithoutCRC)
+	if calculatedCRC != expectCRC {
+		return nil, ErrPacketCorrupted
+	}
+
+	p := &Packet{}
+	buf := bytes.NewReader(payloadWithoutCRC)
+
+	// 读 Type
+	typeByte, err := buf.ReadByte()
+	if err != nil {
 		return nil, err
 	}
-	// TODO: 做一些校验工作
-	return &p, nil
+	p.Type = PacketType(typeByte)
+
+	// 读 Seq，Ack，Tick
+	fields := []*uint32{&p.Seq, &p.Ack, &p.Tick}
+	for _, f := range fields {
+		if err := binary.Read(buf, binary.BigEndian, f); err != nil {
+			return nil, err
+		}
+	}
+
+	// 填充 Payload
+	p.Payload, err = io.ReadAll(buf)
+	if err != nil {
+		return nil, err
+	}
+	return p, nil
 }
 
 // 迭代器

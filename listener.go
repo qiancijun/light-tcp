@@ -85,7 +85,7 @@ func (l *LtcpListener) Run() {
 			l.newLtcpErr <- err
 			continue
 		}
-		log.Println("read a new UDP packet, data len: ", n)
+		// log.Println("read a new UDP packet, data len: ", n)
 		l.lock.RLock()
 		ltcpConn, ok := l.ltcpConnMap[remoteAddr.String()]
 		l.lock.RUnlock()

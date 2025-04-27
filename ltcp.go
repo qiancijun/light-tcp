@@ -69,20 +69,18 @@ func (ltcp *Ltcp) Parse(bts []byte) error {
 		// 接受到了一个不可解析的包
 		return err
 	}
-	log.Printf("[Debug] parse packet, type=%d, seq=%d, tick=%d\n", packet.Type, packet.Seq, packet.Tick)
+	// log.Printf("[Debug] parse packet, type=%d, seq=%d, tick=%d\n", packet.Type, packet.Seq, packet.Tick)
 	switch packet.Type {
 	case PacketTypeData:
 		// 接受到的包是一个数据包
 		// 更新一下最后收到数据的 Tick
 		ltcp.lastRecvTick = ltcp.currentTick
 		// 加入到接收缓冲区
-		log.Printf("[Debug] conn put data packet to recv queue")
 		ltcp.recvQueue.push(packet)
 	case PacketTypePing:
 		// 心跳包
 	case PacketTypeClose:
-		// 关闭连接
-		// 通知上游关闭链接
+		// 关闭连接，通知上游关闭链接
 		return ErrRemoteEof
 	default:
 		// TODO: 接受到了一个未知类型的包
@@ -99,6 +97,7 @@ func (ltcp *Ltcp) Recv(buf []byte) (int, error) {
 	if packet == nil {
 		return 0, nil
 	}
+	log.Println("[Debug] handle packet data, seq: ", packet.Seq)
 	copy(buf, packet.Payload)
 	return len(packet.Payload), nil
 }

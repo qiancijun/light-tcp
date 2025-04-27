@@ -130,3 +130,7 @@ func TestConnRead(t *testing.T) {
 	}
 	assert.Equal(t, 3, idx)
 }
+
+// func TestWriteSeq(t *testing.T) {
+// 	conn := createLtcpConn(t)	
+// }
